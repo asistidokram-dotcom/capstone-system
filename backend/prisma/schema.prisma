@@ -1,0 +1,249 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- ENUMS ---
+enum Role {
+  ADMIN
+  COORDINATOR
+  STUDENT
+  ADVISER
+  PANELIST
+}
+
+enum GroupStatus {
+  PENDING_ADVISER
+  ADVISER_ASSIGNED
+  PROPOSAL_PENDING
+  TITLE_APPROVED
+  FOR_PROPOSAL_DEFENSE
+  FOR_FINAL_DEFENSE
+  WITH_REVISIONS
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
+enum DefenseType {
+  TITLE_DEFENSE
+  PROPOSAL_DEFENSE
+  FINAL_DEFENSE
+}
+
+enum DefenseResult {
+  PASS
+  CONDITIONAL_PASS
+  FAIL
+}
+
+enum RevisionStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+// --- CORE USER MODELS ---
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  firstName    String
+  lastName     String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  student      Student?
+  adviser      Adviser?
+  panelist     Panelist?
+  auditLogs    AuditLog[]
+}
+
+model Student {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  studentNumber String   @unique
+  sectionId     String
+  user          User     @relation(fields: [userId], references: [id])
+  section       Section  @relation(fields: [sectionId], references: [id])
+  groupMembers  GroupMember[]
+}
+
+model Adviser {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  department String
+  user       User     @relation(fields: [userId], references: [id])
+  groups     CapstoneGroup[]
+}
+
+model Panelist {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  expertise String
+  user      User     @relation(fields: [userId], references: [id])
+  schedules DefensePanelMember[]
+  availability PanelAvailability[]
+}
+
+// --- ACADEMIC CONTEXT ---
+model Program {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  sections Section[]
+}
+
+model Section {
+  id        String    @id @default(uuid())
+  name      String
+  programId String
+  program   Program   @relation(fields: [programId], references: [id])
+  students  Student[]
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  capacity  Int
+  schedules DefenseSchedule[]
+}
+
+// --- CAPSTONE GROUP ---
+model CapstoneGroup {
+  id        String      @id @default(uuid())
+  name      String
+  status    GroupStatus @default(PENDING_ADVISER)
+  adviserId String?
+  adviser   Adviser?    @relation(fields: [adviserId], references: [id])
+  members   GroupMember[]
+  proposals TitleProposal[]
+  schedules DefenseSchedule[]
+  createdAt DateTime    @default(now())
+}
+
+model GroupMember {
+  id       String        @id @default(uuid())
+  groupId  String
+  studentId String
+  group    CapstoneGroup @relation(fields: [groupId], references: [id])
+  student  Student       @relation(fields: [studentId], references: [id])
+  
+  @@unique([studentId]) // A student can only be in one group
+}
+
+// --- PROPOSALS ---
+model TitleProposal {
+  id           String         @id @default(uuid())
+  groupId      String
+  title        String
+  abstract     String
+  filePath     String
+  status       ProposalStatus @default(PENDING)
+  version      Int            @default(1)
+  group        CapstoneGroup  @relation(fields: [groupId], references: [id])
+  remarks      ProposalRemark[]
+  createdAt    DateTime       @default(now())
+}
+
+model ProposalRemark {
+  id         String        @id @default(uuid())
+  proposalId String
+  authorId   String // Could be Admin, Coordinator, Adviser, or Panelist
+  remarkText String
+  proposal   TitleProposal @relation(fields: [proposalId], references: [id])
+  createdAt  DateTime      @default(now())
+}
+
+// --- SCHEDULING ---
+model DefenseSchedule {
+  id           String         @id @default(uuid())
+  groupId      String
+  type         DefenseType
+  date         DateTime
+  startTime    DateTime
+  endTime      DateTime
+  roomId       String
+  group        CapstoneGroup  @relation(fields: [groupId], references: [id])
+  room         Room           @relation(fields: [roomId], references: [id])
+  panelMembers DefensePanelMember[]
+  evaluations  Evaluation[]
+  revisions    RevisionChecklist[]
+}
+
+model DefensePanelMember {
+  id         String         @id @default(uuid())
+  scheduleId String
+  panelistId String
+  schedule   DefenseSchedule @relation(fields: [scheduleId], references: [id])
+  panelist   Panelist       @relation(fields: [panelistId], references: [id])
+}
+
+model PanelAvailability {
+  id         String   @id @default(uuid())
+  panelistId String
+  dayOfWeek  Int      // 1 = Monday, 7 = Sunday
+  startTime  DateTime
+  endTime    DateTime
+  panelist   Panelist @relation(fields: [panelistId], references: [id])
+}
+
+// --- EVALUATION & REVISIONS ---
+model EvaluationCriteria {
+  id        String       @id @default(uuid())
+  name      String       // e.g., "Presentation"
+  weight    Float        // e.g., 0.30
+  maxScore  Int          @default(100)
+  evaluations Evaluation[]
+}
+
+model Evaluation {
+  id           String             @id @default(uuid())
+  scheduleId   String
+  panelistId   String
+  criteriaId   String
+  score        Float
+  comments     String?
+  schedule     DefenseSchedule    @relation(fields: [scheduleId], references: [id])
+  criteria     EvaluationCriteria @relation(fields: [criteriaId], references: [id])
+  createdAt    DateTime           @default(now())
+}
+
+model RevisionChecklist {
+  id         String         @id @default(uuid())
+  scheduleId String
+  description String
+  status     RevisionStatus @default(PENDING)
+  schedule   DefenseSchedule @relation(fields: [scheduleId], references: [id])
+  submissions RevisionSubmission[]
+}
+
+model RevisionSubmission {
+  id          String            @id @default(uuid())
+  checklistId String
+  filePath    String
+  checklist   RevisionChecklist @relation(fields: [checklistId], references: [id])
+  submittedAt DateTime          @default(now())
+}
+
+// --- AUDIT LOGS ---
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String   // e.g., "CREATE_GROUP", "APPROVE_PROPOSAL"
+  details   String   // e.g., "Approved proposal for Group Alpha"
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
